@@ -5,5 +5,6 @@ data class Sala(
     val jugadores: MutableList<Jugador> = mutableListOf(),
     var rondaActual: Ronda? = null,
     var enCurso: Boolean = false,
-    var ganador: Jugador? = null
+    var ganador: Jugador? = null,
+    val codigo: String = "" // NUEVO: Código de la sala
 )

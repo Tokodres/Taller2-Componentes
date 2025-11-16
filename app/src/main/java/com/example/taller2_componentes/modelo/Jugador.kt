@@ -4,5 +4,6 @@ data class Jugador(
     val id: String = "",
     val nombre: String = "",
     var emojiAsignado: Emoji? = null,
-    var sigueEnJuego: Boolean = true
+    var sigueEnJuego: Boolean = true,
+    val esAnfitrion: Boolean = false // NUEVO: Identificar al anfitrión
 )

@@ -4,4 +4,6 @@ data class Ronda(
     var numero: Int = 1,
     var jugadorEnTurno: Jugador? = null,
     var tiempoRestante: Long = 30
-)
+) {
+    constructor() : this(1, null, 30)
+}

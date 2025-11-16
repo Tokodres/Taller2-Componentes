@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "569799381890",
+    "project_id": "taller2-emojiguess",
+    "storage_bucket": "taller2-emojiguess.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:569799381890:android:099a0562cf242117b4b59b",
+        "android_client_info": {
+          "package_name": "com.example.taller2_componentes"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTgLKvqSmBfIJxgDr0IL6o9miFFmdVZY8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

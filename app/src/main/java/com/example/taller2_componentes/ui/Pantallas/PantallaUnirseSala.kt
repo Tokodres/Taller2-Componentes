@@ -20,6 +20,7 @@ fun PantallaUnirseSala(
     var codigoSala by remember { mutableStateOf("") }
     var nombreJugador by remember { mutableStateOf("") }
     var mensajeError by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -106,24 +107,47 @@ fun PantallaUnirseSala(
                     }
 
                     if (nombreJugador.length < 2) {
-                        mensajeError = "Ingresa un nombre válido"
+                        mensajeError = "Ingresa un nombre válido (mínimo 2 caracteres)"
                         return@Button
                     }
 
-                    val exito = juegoController.unirseASala(codigoSala, nombreJugador)
+                    isLoading = true
+                    mensajeError = ""
 
-                    if (exito) {
-                        onUnirseExitoso()
-                    } else {
-                        mensajeError = "No se pudo unir a la sala. Verifica el código."
+                    // CORREGIDO: Usar callback para manejar resultado asíncrono
+                    juegoController.unirseASala(codigoSala, nombreJugador) { exito ->
+                        isLoading = false
+                        if (exito) {
+                            onUnirseExitoso()
+                        } else {
+                            mensajeError = "No se pudo unir a la sala. Verifica:\n• El código es correcto\n• La sala existe\n• El juego no ha comenzado"
+                        }
                     }
                 },
-                enabled = codigoSala.length == 6 && nombreJugador.length >= 2,
+                enabled = !isLoading && codigoSala.length == 6 && nombreJugador.length >= 2,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
             ) {
-                Text("Unirse a Sala")
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("Unirse a Sala")
+                }
+            }
+
+            // Información adicional
+            if (isLoading) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Conectando con la sala...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

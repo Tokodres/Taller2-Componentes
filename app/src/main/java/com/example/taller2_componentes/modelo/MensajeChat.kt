@@ -6,4 +6,6 @@ data class MensajeChat(
     val nombreJugador: String = "",
     val mensaje: String = "",
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    constructor() : this("", "", "", "", System.currentTimeMillis())
+}

@@ -1,6 +1,10 @@
 package com.example.taller2_componentes.Controlador
 
 import com.example.taller2_componentes.modelo.*
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -9,9 +13,8 @@ import java.util.UUID
 class JuegoController {
     private var salaActual: Sala? = null
     private val emojisDisponibles = listOf("😀", "😂", "🥰", "😎", "🤔", "😴", "🥳", "😡", "👻", "🤖")
-
-    // Mapa de salas activas (código -> Sala)
-    private val salasActivas = mutableMapOf<String, Sala>()
+    private val database = FirebaseDatabase.getInstance()
+    private val salasRef = database.getReference("salas")
 
     // Flujos para estado compartido
     private val _mensajesChat = MutableStateFlow<List<MensajeChat>>(emptyList())
@@ -20,9 +23,8 @@ class JuegoController {
     private val _tiempoRestante = MutableStateFlow(30L)
     val tiempoRestante: StateFlow<Long> = _tiempoRestante.asStateFlow()
 
-    private var temporizadorActivo = false
+    // ===== MÉTODOS DE GESTIÓN DE SALA =====
 
-    // NUEVO: Crear sala como anfitrión
     fun crearSalaComoAnfitrion(nombreAnfitrion: String): String {
         val codigoSala = generarCodigoSala()
         val anfitrion = Jugador(
@@ -39,128 +41,154 @@ class JuegoController {
         )
 
         salaActual = nuevaSala
-        salasActivas[codigoSala] = nuevaSala
 
-        // Mensaje de sistema
+        // Guardar en Firebase
+        salasRef.child(codigoSala).setValue(nuevaSala)
+
+        // Escuchar cambios en la sala
+        escucharCambiosEnSala(codigoSala)
+
         agregarMensajeChat("Sistema", "🎮 Sala creada con código: $codigoSala")
         agregarMensajeChat("Sistema", "👑 $nombreAnfitrion es el anfitrión")
 
         return codigoSala
     }
 
-    // NUEVO: Unirse a sala existente
-    fun unirseASala(codigoSala: String, nombreJugador: String): Boolean {
-        val sala = salasActivas[codigoSala]
+    // CORREGIDO: Función con callback para manejar resultado asíncrono
+    fun unirseASala(codigoSala: String, nombreJugador: String, onResult: (Boolean) -> Unit) {
+        println("🔄 Intentando unirse a sala: $codigoSala")
 
-        if (sala == null) {
-            return false // Sala no existe
+        // Verificar si la sala existe en Firebase
+        salasRef.child(codigoSala).get().addOnSuccessListener { snapshot ->
+            if (snapshot.exists()) {
+                val sala = snapshot.getValue(Sala::class.java)
+                if (sala != null && !sala.enCurso) {
+                    println("✅ Sala encontrada: ${sala.codigo}")
+
+                    val nuevoJugador = Jugador(
+                        id = UUID.randomUUID().toString(),
+                        nombre = nombreJugador,
+                        esAnfitrion = false
+                    )
+
+                    sala.jugadores.add(nuevoJugador)
+                    salaActual = sala
+
+                    // Actualizar en Firebase
+                    salasRef.child(codigoSala).setValue(sala).addOnSuccessListener {
+                        println("✅ Jugador agregado: $nombreJugador")
+
+                        // Escuchar cambios en la sala
+                        escucharCambiosEnSala(codigoSala)
+                        agregarMensajeChat("Sistema", "🎉 $nombreJugador se unió a la sala")
+                        onResult(true)
+                    }.addOnFailureListener { error ->
+                        println("❌ Error al actualizar sala: ${error.message}")
+                        onResult(false)
+                    }
+                } else {
+                    println("❌ Sala no disponible o en curso")
+                    onResult(false)
+                }
+            } else {
+                println("❌ Sala no encontrada: $codigoSala")
+                onResult(false)
+            }
+        }.addOnFailureListener { error ->
+            println("❌ Error de Firebase: ${error.message}")
+            onResult(false)
         }
-
-        if (sala.enCurso) {
-            return false // El juego ya empezó
-        }
-
-        // Verificar si el nombre ya existe en la sala
-        if (sala.jugadores.any { it.nombre == nombreJugador }) {
-            return false // Nombre duplicado
-        }
-
-        val nuevoJugador = Jugador(
-            id = UUID.randomUUID().toString(),
-            nombre = nombreJugador,
-            esAnfitrion = false
-        )
-
-        sala.jugadores.add(nuevoJugador)
-        salaActual = sala
-
-        // Mensaje de sistema
-        agregarMensajeChat("Sistema", "🎉 $nombreJugador se unió a la sala")
-
-        return true
     }
 
-    // NUEVO: Generar código de sala único
-    private fun generarCodigoSala(): String {
-        val caracteres = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        return (1..6).map { caracteres.random() }.joinToString("")
+    private fun escucharCambiosEnSala(codigoSala: String) {
+        salasRef.child(codigoSala).addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val sala = snapshot.getValue(Sala::class.java)
+                if (sala != null) {
+                    salaActual = sala
+                    println("🔄 Sala actualizada: ${sala.jugadores.size} jugadores")
+                    sala.jugadores.forEach { jugador ->
+                        println("   👤 ${jugador.nombre} (Anfitrión: ${jugador.esAnfitrion})")
+                    }
+                } else {
+                    println("❌ No se pudo obtener la sala")
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                println("❌ Error escuchando sala: ${error.message}")
+            }
+        })
     }
 
-    // NUEVO: Obtener código de sala actual
+    // ===== MÉTODOS DE OBTENCIÓN DE DATOS =====
+
+    fun obtenerSala(): Sala? {
+        return salaActual
+    }
+
+    fun obtenerJugadores(): List<Jugador> {
+        return salaActual?.jugadores ?: emptyList()
+    }
+
     fun obtenerCodigoSala(): String {
         return salaActual?.codigo ?: ""
     }
 
-    // NUEVO: Verificar si el usuario actual es anfitrión
+    fun obtenerJugadorActual(): Jugador? {
+        return salaActual?.jugadores?.firstOrNull()
+    }
+
     fun esAnfitrion(jugadorId: String): Boolean {
         return salaActual?.jugadores?.find { it.id == jugadorId }?.esAnfitrion ?: false
     }
 
-    // NUEVO: Obtener jugador actual
-    fun obtenerJugadorActual(): Jugador? {
-        // En una implementación real, esto vendría de la autenticación
-        // Por ahora, devolvemos el primer jugador como ejemplo
-        return salaActual?.jugadores?.firstOrNull()
+    fun obtenerJugadorEnTurno(): Jugador? {
+        return salaActual?.rondaActual?.jugadorEnTurno
     }
 
-    // NUEVO: Iniciar juego (solo anfitrión)
+    fun obtenerTiempoRestante(): Long {
+        return salaActual?.rondaActual?.tiempoRestante ?: 30L
+    }
+
+    fun obtenerMensajesChat(): List<MensajeChat> {
+        return _mensajesChat.value
+    }
+
+    fun obtenerEmojisVisibles(jugadorIdActual: String): List<Pair<String, String>> {
+        val sala = salaActual ?: return emptyList()
+        return sala.jugadores
+            .filter { it.id != jugadorIdActual && it.emojiAsignado != null }
+            .map { it.nombre to (it.emojiAsignado?.codigo ?: "") }
+    }
+
+    // ===== MÉTODOS DE JUEGO =====
+
     fun iniciarJuego(): Boolean {
         val sala = salaActual ?: return false
 
-        // Verificar que hay al menos 2 jugadores
-        if (sala.jugadores.size < 2) return false
+        if (sala.jugadores.size < 2) {
+            println("❌ No hay suficientes jugadores: ${sala.jugadores.size}")
+            return false
+        }
 
         sala.enCurso = true
         sala.ganador = null
         asignarEmojis()
         iniciarNuevaRonda()
-        iniciarTemporizador()
+
+        // Sincronizar con Firebase
+        salasRef.child(sala.codigo).setValue(sala)
 
         agregarMensajeChat("Sistema", "🚀 ¡El juego ha comenzado!")
+        println("✅ Juego iniciado con ${sala.jugadores.size} jugadores")
 
         return true
-    }
-
-    // Resto de métodos existentes (con algunas modificaciones)
-    private fun asignarEmojis() {
-        val sala = salaActual ?: return
-
-        val emojisMezclados = emojisDisponibles.shuffled()
-
-        sala.jugadores.forEachIndexed { index, jugador ->
-            if (jugador.sigueEnJuego) {
-                jugador.emojiAsignado = Emoji(emojisMezclados[index % emojisMezclados.size])
-            }
-        }
-    }
-
-    private fun iniciarNuevaRonda() {
-        val sala = salaActual ?: return
-
-        val jugadoresActivos = sala.jugadores.filter { it.sigueEnJuego }
-        if (jugadoresActivos.isEmpty()) return
-
-        sala.rondaActual = Ronda(
-            numero = (sala.rondaActual?.numero ?: 0) + 1,
-            jugadorEnTurno = jugadoresActivos.first(),
-            tiempoRestante = 30
-        )
-
-        // Reiniciar temporizador para nueva ronda
-        _tiempoRestante.value = 30
-        iniciarTemporizador()
-
-        agregarMensajeChat("Sistema", "🔄 Ronda ${sala.rondaActual?.numero} - Turno de: ${sala.rondaActual?.jugadorEnTurno?.nombre}")
     }
 
     fun procesarAdivinanza(jugadorId: String, emojiAdivinado: String): Boolean {
         val sala = salaActual ?: return false
         val jugador = sala.jugadores.find { it.id == jugadorId } ?: return false
-
-        // Verificar si es el turno del jugador
-        if (jugador.id != sala.rondaActual?.jugadorEnTurno?.id) {
-            return false
-        }
 
         val adivinoCorrecto = jugador.emojiAsignado?.codigo == emojiAdivinado
 
@@ -171,46 +199,30 @@ class JuegoController {
             agregarMensajeChat("Sistema", "❌ ${jugador.nombre} falló y fue eliminado")
         }
 
-        temporizadorActivo = false
-
-        val jugadoresActivos = sala.jugadores.count { it.sigueEnJuego }
-        if (jugadoresActivos == 1) {
-            sala.ganador = sala.jugadores.find { it.sigueEnJuego }
-            sala.enCurso = false
-            agregarMensajeChat("Sistema", "🎉 ¡${sala.ganador?.nombre} es el GANADOR!")
-        } else if (jugadoresActivos > 1) {
-            pasarSiguienteTurno()
-            asignarEmojis()
-            agregarMensajeChat("Sistema", "🔄 Nuevos emojis asignados")
-        }
+        // Sincronizar con Firebase
+        salasRef.child(sala.codigo).setValue(sala)
 
         return adivinoCorrecto
     }
 
-    private fun pasarSiguienteTurno() {
+    fun actualizarTemporizador() {
         val sala = salaActual ?: return
         val ronda = sala.rondaActual ?: return
 
-        val jugadoresActivos = sala.jugadores.filter { it.sigueEnJuego }
-        if (jugadoresActivos.isEmpty()) return
-
-        val indiceActual = jugadoresActivos.indexOfFirst { it.id == ronda.jugadorEnTurno?.id }
-        val siguienteIndice = (indiceActual + 1) % jugadoresActivos.size
-
-        ronda.jugadorEnTurno = jugadoresActivos[siguienteIndice]
-        ronda.tiempoRestante = 30
-
-        agregarMensajeChat("Sistema", "🔄 Turno de: ${ronda.jugadorEnTurno?.nombre}")
+        if (ronda.tiempoRestante > 0) {
+            ronda.tiempoRestante--
+        } else {
+            // Tiempo agotado, eliminar jugador
+            ronda.jugadorEnTurno?.sigueEnJuego = false
+            agregarMensajeChat("Sistema", "⏰ Tiempo agotado para ${ronda.jugadorEnTurno?.nombre}")
+            iniciarNuevaRonda()
+        }
     }
 
-    // Sistema de chat
+    // ===== MÉTODOS DE CHAT =====
+
     fun enviarMensajeChat(nombreJugador: String, mensaje: String) {
-        val nuevoMensaje = MensajeChat(
-            jugadorId = "chat",
-            nombreJugador = nombreJugador,
-            mensaje = mensaje
-        )
-        _mensajesChat.value = _mensajesChat.value + nuevoMensaje
+        agregarMensajeChat(nombreJugador, mensaje)
     }
 
     private fun agregarMensajeChat(nombreJugador: String, mensaje: String) {
@@ -222,65 +234,34 @@ class JuegoController {
         _mensajesChat.value = _mensajesChat.value + nuevoMensaje
     }
 
-    // Sistema de temporizador
-    private fun iniciarTemporizador() {
-        temporizadorActivo = true
-        _tiempoRestante.value = 30
+    // ===== MÉTODOS AUXILIARES =====
+
+    private fun generarCodigoSala(): String {
+        val caracteres = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        return (1..6).map { caracteres.random() }.joinToString("")
     }
 
-    fun actualizarTemporizador() {
-        if (temporizadorActivo) {
-            val tiempoActual = _tiempoRestante.value
-            if (tiempoActual > 0) {
-                _tiempoRestante.value = tiempoActual - 1
-            } else {
-                temporizadorActivo = false
-                val jugadorEnTurno = salaActual?.rondaActual?.jugadorEnTurno
-                jugadorEnTurno?.let { jugador ->
-                    agregarMensajeChat("Sistema", "⏰ Tiempo agotado! ${jugador.nombre} fue eliminado")
-                    jugador.sigueEnJuego = false
-                    procesarFinDeTurno()
-                }
-            }
-        }
-    }
-
-    private fun procesarFinDeTurno() {
+    private fun asignarEmojis() {
         val sala = salaActual ?: return
+        val emojisMezclados = emojisDisponibles.shuffled()
 
-        val jugadoresActivos = sala.jugadores.count { it.sigueEnJuego }
-        if (jugadoresActivos == 1) {
-            sala.ganador = sala.jugadores.find { it.sigueEnJuego }
-            sala.enCurso = false
-            agregarMensajeChat("Sistema", "🎉 ¡${sala.ganador?.nombre} es el GANADOR!")
-        } else if (jugadoresActivos > 1) {
-            pasarSiguienteTurno()
-            asignarEmojis()
+        sala.jugadores.forEachIndexed { index, jugador ->
+            if (jugador.sigueEnJuego) {
+                jugador.emojiAsignado = Emoji(emojisMezclados[index % emojisMezclados.size])
+            }
         }
     }
 
-    // Obtener emojis visibles (de otros jugadores)
-    fun obtenerEmojisVisibles(jugadorId: String): List<Pair<String, String>> {
-        val sala = salaActual ?: return emptyList()
+    private fun iniciarNuevaRonda() {
+        val sala = salaActual ?: return
+        val jugadoresActivos = sala.jugadores.filter { it.sigueEnJuego }
+        if (jugadoresActivos.isEmpty()) return
 
-        return sala.jugadores
-            .filter { it.id != jugadorId && it.sigueEnJuego }
-            .map { jugador ->
-                Pair(jugador.nombre, jugador.emojiAsignado?.codigo ?: "?")
-            }
-    }
-
-    // Métodos existentes
-    fun obtenerJugadores(): List<Jugador> {
-        return salaActual?.jugadores ?: emptyList()
-    }
-
-    fun obtenerJugadorEnTurno(): Jugador? {
-        return salaActual?.rondaActual?.jugadorEnTurno
-    }
-
-    fun obtenerSala(): Sala? {
-        return salaActual
+        sala.rondaActual = Ronda(
+            numero = (sala.rondaActual?.numero ?: 0) + 1,
+            jugadorEnTurno = jugadoresActivos.first(),
+            tiempoRestante = 30
+        )
     }
 
     fun reiniciarJuego() {
@@ -292,22 +273,9 @@ class JuegoController {
         salaActual?.rondaActual = null
         salaActual?.ganador = null
         _mensajesChat.value = emptyList()
-        temporizadorActivo = false
-        _tiempoRestante.value = 30
     }
 
-    fun obtenerMensajesChat(): List<MensajeChat> {
-        return _mensajesChat.value
-    }
-
-    fun obtenerTiempoRestante(): Long {
-        return _tiempoRestante.value
-    }
-
-    // NUEVO: Salir de la sala
     fun salirDeSala() {
         salaActual = null
-        _mensajesChat.value = emptyList()
-        temporizadorActivo = false
     }
 }

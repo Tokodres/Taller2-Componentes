@@ -6,5 +6,8 @@ data class Sala(
     var rondaActual: Ronda? = null,
     var enCurso: Boolean = false,
     var ganador: Jugador? = null,
-    val codigo: String = "" // NUEVO: Código de la sala
-)
+    val codigo: String = ""
+) {
+    // Constructor sin parámetros para Firebase
+    constructor() : this("", mutableListOf(), null, false, null, "")
+}

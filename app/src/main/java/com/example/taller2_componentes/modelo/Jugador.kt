@@ -5,5 +5,7 @@ data class Jugador(
     val nombre: String = "",
     var emojiAsignado: Emoji? = null,
     var sigueEnJuego: Boolean = true,
-    val esAnfitrion: Boolean = false // NUEVO: Identificar al anfitrión
-)
+    val esAnfitrion: Boolean = false
+) {
+    constructor() : this("", "", null, true, false)
+}

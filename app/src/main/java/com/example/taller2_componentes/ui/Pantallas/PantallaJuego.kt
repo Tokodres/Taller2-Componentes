@@ -26,12 +26,18 @@ fun PantallaJuego(
 ) {
     var jugadores by remember { mutableStateOf(juegoController.obtenerJugadores()) }
     var jugadorEnTurno by remember { mutableStateOf(juegoController.obtenerJugadorEnTurno()) }
+    val jugadorActual = remember { juegoController.obtenerJugadorActual() }
     var mensaje by remember { mutableStateOf("") }
     var mostrarDialogoEmojis by remember { mutableStateOf(false) }
     var ganador by remember { mutableStateOf(juegoController.obtenerSala()?.ganador) }
     var tiempoRestante by remember { mutableStateOf(juegoController.obtenerTiempoRestante()) }
-    var mensajesChat by remember { mutableStateOf(juegoController.obtenerMensajesChat()) }
+
+    // CORREGIDO: Usar el StateFlow de mensajes del controlador
+    val mensajesChat by juegoController.mensajesChat.collectAsState()
+
     var mensajeChat by remember { mutableStateOf(TextFieldValue()) }
+
+    val esMiTurno = jugadorEnTurno?.id == jugadorActual?.id
 
     // Temporizador automático
     LaunchedEffect(Unit) {
@@ -44,7 +50,6 @@ fun PantallaJuego(
             jugadores = juegoController.obtenerJugadores()
             jugadorEnTurno = juegoController.obtenerJugadorEnTurno()
             ganador = juegoController.obtenerSala()?.ganador
-            mensajesChat = juegoController.obtenerMensajesChat()
         }
     }
 
@@ -165,7 +170,7 @@ fun PantallaJuego(
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
 
-                val emojisVisibles = juegoController.obtenerEmojisVisibles(jugadorEnTurno?.id ?: "")
+                val emojisVisibles = juegoController.obtenerEmojisVisibles(jugadorActual?.id ?: "")
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.height(120.dp)
@@ -196,12 +201,12 @@ fun PantallaJuego(
                 }
             }
 
-            // Chat
+            // Chat - COMPLETAMENTE CORREGIDO
             Column(
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = "Chat:",
+                    text = "Chat Global:",
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
@@ -217,24 +222,40 @@ fun PantallaJuego(
                         LazyColumn(
                             modifier = Modifier
                                 .weight(1f)
-                                .padding(8.dp)
+                                .padding(8.dp),
+                            reverseLayout = true // Para que los mensajes nuevos aparezcan abajo
                         ) {
-                            items(mensajesChat) { mensajeChat ->
+                            items(mensajesChat.reversed()) { mensajeChatItem ->
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(vertical = 2.dp),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (mensajeChatItem.jugadorId == "sistema")
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        else if (mensajeChatItem.jugadorId == jugadorActual?.id)
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        else
+                                            MaterialTheme.colorScheme.surface
+                                    )
                                 ) {
                                     Column(modifier = Modifier.padding(8.dp)) {
                                         Text(
-                                            text = mensajeChat.nombreJugador,
+                                            text = mensajeChatItem.nombreJugador,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary
+                                            color = if (mensajeChatItem.jugadorId == "sistema")
+                                                MaterialTheme.colorScheme.onTertiaryContainer
+                                            else
+                                                MaterialTheme.colorScheme.primary
                                         )
                                         Text(
-                                            text = mensajeChat.mensaje,
-                                            style = MaterialTheme.typography.bodyMedium
+                                            text = mensajeChatItem.mensaje,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (mensajeChatItem.jugadorId == "sistema")
+                                                MaterialTheme.colorScheme.onTertiaryContainer
+                                            else
+                                                MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                 }
@@ -259,10 +280,8 @@ fun PantallaJuego(
                             IconButton(
                                 onClick = {
                                     if (mensajeChat.text.isNotBlank()) {
-                                        juegoController.enviarMensajeChat(
-                                            jugadorEnTurno?.nombre ?: "Anónimo",
-                                            mensajeChat.text
-                                        )
+                                        // CORREGIDO: Usar el nuevo método de enviar mensaje
+                                        juegoController.enviarMensajeChat(mensajeChat.text)
                                         mensajeChat = TextFieldValue()
                                     }
                                 }
@@ -282,7 +301,7 @@ fun PantallaJuego(
                 .padding(top = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (ganador == null) {
+            if (ganador == null && esMiTurno) {
                 Button(
                     onClick = {
                         if (jugadorEnTurno != null) {

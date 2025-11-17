@@ -58,10 +58,14 @@ class FirebaseRepository {
     fun enviarMensaje(salaId: String, mensaje: MensajeChat): Flow<Boolean> = callbackFlow {
         val key = mensajesRef.child(salaId).push().key
         if (key != null) {
-            mensajesRef.child(salaId).child(key).setValue(mensaje).addOnCompleteListener { task ->
+            val mensajeConId = mensaje.copy(id = key)
+            mensajesRef.child(salaId).child(key).setValue(mensajeConId).addOnCompleteListener { task ->
                 trySend(task.isSuccessful)
                 close()
             }
+        } else {
+            trySend(false)
+            close()
         }
         awaitClose()
     }
@@ -69,7 +73,15 @@ class FirebaseRepository {
     fun obtenerMensajes(salaId: String): Flow<List<MensajeChat>> = callbackFlow {
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val mensajes = snapshot.children.mapNotNull { it.getValue(MensajeChat::class.java) }
+                val mensajes = mutableListOf<MensajeChat>()
+                snapshot.children.forEach { child ->
+                    val mensaje = child.getValue(MensajeChat::class.java)
+                    if (mensaje != null) {
+                        mensajes.add(mensaje)
+                    }
+                }
+                // Ordenar por timestamp
+                mensajes.sortBy { it.timestamp }
                 trySend(mensajes)
             }
 
@@ -84,6 +96,15 @@ class FirebaseRepository {
     // Eliminar sala cuando el juego termina
     fun eliminarSala(salaId: String): Flow<Boolean> = callbackFlow {
         salasRef.child(salaId).removeValue().addOnCompleteListener { task ->
+            trySend(task.isSuccessful)
+            close()
+        }
+        awaitClose()
+    }
+
+    // Eliminar mensajes de la sala
+    fun eliminarMensajesSala(salaId: String): Flow<Boolean> = callbackFlow {
+        mensajesRef.child(salaId).removeValue().addOnCompleteListener { task ->
             trySend(task.isSuccessful)
             close()
         }

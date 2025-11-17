@@ -1,34 +1,52 @@
 package com.example.taller2_componentes.Controlador
 
 import com.example.taller2_componentes.modelo.*
+import com.example.taller2_componentes.repositorio.FirebaseRepository
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.UUID
+import kotlinx.coroutines.flow.collect
+import java.util.*
 
 class JuegoController {
     private var salaActual: Sala? = null
+    private var jugadorActual: Jugador? = null
     private val emojisDisponibles = listOf("😀", "😂", "🥰", "😎", "🤔", "😴", "🥳", "😡", "👻", "🤖")
     private val database = FirebaseDatabase.getInstance()
     private val salasRef = database.getReference("salas")
+    private val firebaseRepository = FirebaseRepository()
 
     // Flujos para estado compartido
     private val _mensajesChat = MutableStateFlow<List<MensajeChat>>(emptyList())
     val mensajesChat: StateFlow<List<MensajeChat>> = _mensajesChat.asStateFlow()
 
+    private val _jugadores = MutableStateFlow<List<Jugador>>(emptyList())
+    val jugadores: StateFlow<List<Jugador>> = _jugadores.asStateFlow()
+
+    private val _salaState = MutableStateFlow<Sala?>(null)
+    val salaState: StateFlow<Sala?> = _salaState.asStateFlow()
+
+    private val _esAnfitrion = MutableStateFlow<Boolean>(false)
+    val esAnfitrion: StateFlow<Boolean> = _esAnfitrion.asStateFlow()
+
     private val _tiempoRestante = MutableStateFlow(30L)
     val tiempoRestante: StateFlow<Long> = _tiempoRestante.asStateFlow()
+
+    private var escuchaMensajesJob: Job? = null
+    private var escuchaSalaJob: Job? = null
 
     // ===== MÉTODOS DE GESTIÓN DE SALA =====
 
     fun crearSalaComoAnfitrion(nombreAnfitrion: String): String {
         val codigoSala = generarCodigoSala()
+        val anfitrionId = UUID.randomUUID().toString()
         val anfitrion = Jugador(
-            id = UUID.randomUUID().toString(),
+            id = anfitrionId,
             nombre = nombreAnfitrion,
             esAnfitrion = true
         )
@@ -41,20 +59,29 @@ class JuegoController {
         )
 
         salaActual = nuevaSala
+        jugadorActual = anfitrion
+        _jugadores.value = nuevaSala.jugadores.toList()
+        _salaState.value = nuevaSala
+        _esAnfitrion.value = true
 
         // Guardar en Firebase
         salasRef.child(codigoSala).setValue(nuevaSala)
 
         // Escuchar cambios en la sala
-        escucharCambiosEnSala(codigoSala)
+        iniciarEscuchaSala(codigoSala)
 
-        agregarMensajeChat("Sistema", "🎮 Sala creada con código: $codigoSala")
-        agregarMensajeChat("Sistema", "👑 $nombreAnfitrion es el anfitrión")
+        // Iniciar escucha de mensajes del chat
+        iniciarEscuchaMensajes(codigoSala)
+
+        // Enviar mensaje de sistema a Firebase
+        enviarMensajeSistema("🎮 Sala creada con código: $codigoSala")
+        enviarMensajeSistema("👑 $nombreAnfitrion es el anfitrión")
+
+        println("✅ Sala creada por anfitrión: $nombreAnfitrion (ID: $anfitrionId)")
 
         return codigoSala
     }
 
-    // CORREGIDO: Función con callback para manejar resultado asíncrono
     fun unirseASala(codigoSala: String, nombreJugador: String, onResult: (Boolean) -> Unit) {
         println("🔄 Intentando unirse a sala: $codigoSala")
 
@@ -64,23 +91,49 @@ class JuegoController {
                 val sala = snapshot.getValue(Sala::class.java)
                 if (sala != null && !sala.enCurso) {
                     println("✅ Sala encontrada: ${sala.codigo}")
+                    println("🔍 Jugadores actuales en sala:")
+                    sala.jugadores.forEach { jugador ->
+                        println("   👤 ${jugador.nombre} (Anfitrión: ${jugador.esAnfitrion}, ID: ${jugador.id})")
+                    }
 
+                    // CORREGIDO: Verificar que el jugador no esté ya en la sala
+                    val jugadorExistente = sala.jugadores.find { it.nombre == nombreJugador }
+                    if (jugadorExistente != null) {
+                        println("❌ Ya existe un jugador con ese nombre en la sala")
+                        onResult(false)
+                        return@addOnSuccessListener
+                    }
+
+                    val nuevoJugadorId = UUID.randomUUID().toString()
                     val nuevoJugador = Jugador(
-                        id = UUID.randomUUID().toString(),
+                        id = nuevoJugadorId,
                         nombre = nombreJugador,
-                        esAnfitrion = false
+                        esAnfitrion = false // IMPORTANTE: Siempre false para jugadores que se unen
                     )
 
+                    // CORREGIDO: Agregar jugador sin modificar el estado de anfitrión existente
                     sala.jugadores.add(nuevoJugador)
                     salaActual = sala
+                    jugadorActual = nuevoJugador
+                    _jugadores.value = sala.jugadores.toList()
+                    _salaState.value = sala
+                    _esAnfitrion.value = false // NUNCA true para jugadores que se unen
 
-                    // Actualizar en Firebase
-                    salasRef.child(codigoSala).setValue(sala).addOnSuccessListener {
-                        println("✅ Jugador agregado: $nombreJugador")
+                    // CORREGIDO: Actualizar solo el campo de jugadores en Firebase
+                    val updates = mapOf("jugadores" to sala.jugadores)
+                    salasRef.child(codigoSala).updateChildren(updates).addOnSuccessListener {
+                        println("✅ Jugador agregado: $nombreJugador (NO anfitrión)")
+                        println("🔍 Estado después de unirse:")
+                        println("   - Jugador actual: ${jugadorActual?.nombre} (Anfitrión: ${_esAnfitrion.value})")
+                        println("   - Total jugadores: ${sala.jugadores.size}")
 
                         // Escuchar cambios en la sala
-                        escucharCambiosEnSala(codigoSala)
-                        agregarMensajeChat("Sistema", "🎉 $nombreJugador se unió a la sala")
+                        iniciarEscuchaSala(codigoSala)
+                        // Iniciar escucha de mensajes del chat
+                        iniciarEscuchaMensajes(codigoSala)
+
+                        // Enviar mensaje de sistema a Firebase
+                        enviarMensajeSistema("🎉 $nombreJugador se unió a la sala")
                         onResult(true)
                     }.addOnFailureListener { error ->
                         println("❌ Error al actualizar sala: ${error.message}")
@@ -100,25 +153,55 @@ class JuegoController {
         }
     }
 
-    private fun escucharCambiosEnSala(codigoSala: String) {
-        salasRef.child(codigoSala).addValueEventListener(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val sala = snapshot.getValue(Sala::class.java)
+    // Método para escuchar cambios en la sala en tiempo real
+    private fun iniciarEscuchaSala(codigoSala: String) {
+        escuchaSalaJob?.cancel()
+        escuchaSalaJob = CoroutineScope(Dispatchers.IO).launch {
+            firebaseRepository.obtenerSala(codigoSala).collect { sala ->
                 if (sala != null) {
                     salaActual = sala
+                    _jugadores.value = sala.jugadores.toList()
+                    _salaState.value = sala
+
+                    // CORREGIDO: Actualizar el estado de anfitrión basado en el jugador actual
+                    actualizarEstadoAnfitrion(sala)
+
                     println("🔄 Sala actualizada: ${sala.jugadores.size} jugadores")
                     sala.jugadores.forEach { jugador ->
-                        println("   👤 ${jugador.nombre} (Anfitrión: ${jugador.esAnfitrion})")
+                        println("   👤 ${jugador.nombre} (Anfitrión: ${jugador.esAnfitrion}, ID: ${jugador.id})")
                     }
-                } else {
-                    println("❌ No se pudo obtener la sala")
+                    println("   👤 Jugador actual: ${jugadorActual?.nombre} (Anfitrión: ${_esAnfitrion.value})")
                 }
             }
+        }
+    }
 
-            override fun onCancelled(error: DatabaseError) {
-                println("❌ Error escuchando sala: ${error.message}")
+    // CORREGIDO: Método mejorado para actualizar el estado de anfitrión
+    private fun actualizarEstadoAnfitrion(sala: Sala) {
+        val jugadorActualId = jugadorActual?.id
+        if (jugadorActualId != null) {
+            val jugadorEnSala = sala.jugadores.find { it.id == jugadorActualId }
+            val nuevoEstadoAnfitrion = jugadorEnSala?.esAnfitrion ?: false
+
+            // Solo actualizar si cambió el estado
+            if (_esAnfitrion.value != nuevoEstadoAnfitrion) {
+                _esAnfitrion.value = nuevoEstadoAnfitrion
+                println("🔍 Estado anfitrión ACTUALIZADO: ${_esAnfitrion.value} para jugador: ${jugadorActual?.nombre}")
             }
-        })
+        } else {
+            _esAnfitrion.value = false
+        }
+    }
+
+    // Método para escuchar mensajes del chat en Firebase
+    private fun iniciarEscuchaMensajes(codigoSala: String) {
+        escuchaMensajesJob?.cancel()
+        escuchaMensajesJob = CoroutineScope(Dispatchers.IO).launch {
+            firebaseRepository.obtenerMensajes(codigoSala).collect { mensajes ->
+                _mensajesChat.value = mensajes
+                println("📨 Mensajes actualizados: ${mensajes.size} mensajes")
+            }
+        }
     }
 
     // ===== MÉTODOS DE OBTENCIÓN DE DATOS =====
@@ -128,7 +211,7 @@ class JuegoController {
     }
 
     fun obtenerJugadores(): List<Jugador> {
-        return salaActual?.jugadores ?: emptyList()
+        return _jugadores.value
     }
 
     fun obtenerCodigoSala(): String {
@@ -136,7 +219,12 @@ class JuegoController {
     }
 
     fun obtenerJugadorActual(): Jugador? {
-        return salaActual?.jugadores?.firstOrNull()
+        return jugadorActual
+    }
+
+    // CORREGIDO: Usar el StateFlow en lugar de calcularlo
+    fun esJugadorActualAnfitrion(): Boolean {
+        return _esAnfitrion.value
     }
 
     fun esAnfitrion(jugadorId: String): Boolean {
@@ -167,6 +255,14 @@ class JuegoController {
     fun iniciarJuego(): Boolean {
         val sala = salaActual ?: return false
 
+        // CORREGIDO: Verificación más estricta del anfitrión
+        if (!_esAnfitrion.value) {
+            println("❌ SOLO EL ANFITRIÓN puede iniciar el juego. Estado actual: ${_esAnfitrion.value}")
+            println("❌ Jugador actual: ${jugadorActual?.nombre} (ID: ${jugadorActual?.id})")
+            println("❌ Anfitrión real: ${sala.jugadores.find { it.esAnfitrion }?.nombre}")
+            return false
+        }
+
         if (sala.jugadores.size < 2) {
             println("❌ No hay suficientes jugadores: ${sala.jugadores.size}")
             return false
@@ -180,8 +276,9 @@ class JuegoController {
         // Sincronizar con Firebase
         salasRef.child(sala.codigo).setValue(sala)
 
-        agregarMensajeChat("Sistema", "🚀 ¡El juego ha comenzado!")
-        println("✅ Juego iniciado con ${sala.jugadores.size} jugadores")
+        // Enviar mensaje de sistema a Firebase
+        enviarMensajeSistema("🚀 ¡El juego ha comenzado!")
+        println("✅ Juego iniciado por anfitrión: ${jugadorActual?.nombre}")
 
         return true
     }
@@ -193,10 +290,10 @@ class JuegoController {
         val adivinoCorrecto = jugador.emojiAsignado?.codigo == emojiAdivinado
 
         if (adivinoCorrecto) {
-            agregarMensajeChat("Sistema", "✅ ${jugador.nombre} adivinó correctamente!")
+            enviarMensajeSistema("✅ ${jugador.nombre} adivinó correctamente!")
         } else {
             jugador.sigueEnJuego = false
-            agregarMensajeChat("Sistema", "❌ ${jugador.nombre} falló y fue eliminado")
+            enviarMensajeSistema("❌ ${jugador.nombre} falló y fue eliminado")
         }
 
         // Sincronizar con Firebase
@@ -214,24 +311,59 @@ class JuegoController {
         } else {
             // Tiempo agotado, eliminar jugador
             ronda.jugadorEnTurno?.sigueEnJuego = false
-            agregarMensajeChat("Sistema", "⏰ Tiempo agotado para ${ronda.jugadorEnTurno?.nombre}")
+            enviarMensajeSistema("⏰ Tiempo agotado para ${ronda.jugadorEnTurno?.nombre}")
             iniciarNuevaRonda()
         }
     }
 
     // ===== MÉTODOS DE CHAT =====
 
-    fun enviarMensajeChat(nombreJugador: String, mensaje: String) {
-        agregarMensajeChat(nombreJugador, mensaje)
+    fun enviarMensajeChat(mensaje: String) {
+        val jugador = jugadorActual ?: return
+        val sala = salaActual ?: return
+
+        val mensajeChat = MensajeChat(
+            id = UUID.randomUUID().toString(),
+            jugadorId = jugador.id,
+            nombreJugador = jugador.nombre,
+            mensaje = mensaje,
+            timestamp = System.currentTimeMillis()
+        )
+
+        // Enviar mensaje a Firebase
+        CoroutineScope(Dispatchers.IO).launch {
+            firebaseRepository.enviarMensaje(sala.codigo, mensajeChat).collect { exito ->
+                if (exito) {
+                    println("✅ Mensaje enviado: $mensaje")
+                } else {
+                    println("❌ Error al enviar mensaje")
+                }
+            }
+        }
     }
 
-    private fun agregarMensajeChat(nombreJugador: String, mensaje: String) {
-        val nuevoMensaje = MensajeChat(
+    // Método para enviar mensajes del sistema
+    private fun enviarMensajeSistema(mensaje: String) {
+        val sala = salaActual ?: return
+
+        val mensajeChat = MensajeChat(
+            id = UUID.randomUUID().toString(),
             jugadorId = "sistema",
-            nombreJugador = nombreJugador,
-            mensaje = mensaje
+            nombreJugador = "Sistema",
+            mensaje = mensaje,
+            timestamp = System.currentTimeMillis()
         )
-        _mensajesChat.value = _mensajesChat.value + nuevoMensaje
+
+        // Enviar mensaje a Firebase
+        CoroutineScope(Dispatchers.IO).launch {
+            firebaseRepository.enviarMensaje(sala.codigo, mensajeChat).collect { exito ->
+                if (exito) {
+                    println("✅ Mensaje de sistema enviado: $mensaje")
+                } else {
+                    println("❌ Error al enviar mensaje de sistema")
+                }
+            }
+        }
     }
 
     // ===== MÉTODOS AUXILIARES =====
@@ -272,10 +404,31 @@ class JuegoController {
         salaActual?.enCurso = false
         salaActual?.rondaActual = null
         salaActual?.ganador = null
+
+        // Limpiar mensajes del chat
         _mensajesChat.value = emptyList()
+
+        // Limpiar mensajes en Firebase
+        val codigoSala = salaActual?.codigo
+        if (codigoSala != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                firebaseRepository.eliminarMensajesSala(codigoSala).collect()
+            }
+        }
     }
 
     fun salirDeSala() {
+        // Cancelar escucha de mensajes y sala
+        escuchaMensajesJob?.cancel()
+        escuchaSalaJob?.cancel()
+        escuchaMensajesJob = null
+        escuchaSalaJob = null
+
         salaActual = null
+        jugadorActual = null
+        _mensajesChat.value = emptyList()
+        _jugadores.value = emptyList()
+        _salaState.value = null
+        _esAnfitrion.value = false
     }
 }

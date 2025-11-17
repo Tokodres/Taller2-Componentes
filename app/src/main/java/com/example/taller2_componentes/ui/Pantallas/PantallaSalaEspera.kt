@@ -25,30 +25,24 @@ fun PantallaSalaEspera(
     onBack: () -> Unit,
     onIniciarJuego: () -> Unit
 ) {
-    var jugadores by remember { mutableStateOf(juegoController.obtenerJugadores()) }
+    // CORREGIDO: Usar StateFlow para obtener jugadores en tiempo real
+    val jugadores by juegoController.jugadores.collectAsState()
     val codigoSala = juegoController.obtenerCodigoSala()
-    val jugadorActual = juegoController.obtenerJugadorActual()
-    val esAnfitrion = jugadorActual?.let { juegoController.esAnfitrion(it.id) } ?: false
+
+    // CORREGIDO: Usar StateFlow para obtener el estado de anfitrión en tiempo real
+    val esAnfitrion by juegoController.esAnfitrion.collectAsState()
 
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
     var mostrarMensajeCopiado by remember { mutableStateOf(false) }
-    var tiempoTranscurrido by remember { mutableStateOf(0) }
+    var mostrarErrorIniciar by remember { mutableStateOf(false) }
 
-    // CORREGIDO: Sistema de actualización mejorado
+    // CORREGIDO: Sistema de actualización mejorado usando StateFlow
     LaunchedEffect(key1 = codigoSala) {
         if (codigoSala.isNotEmpty()) {
             while (true) {
-                delay(2000) // Actualizar cada 2 segundos
-                tiempoTranscurrido += 2
-
-                // Actualizar jugadores desde el controlador
-                val nuevosJugadores = juegoController.obtenerJugadores()
-                if (nuevosJugadores.size != jugadores.size || nuevosJugadores != jugadores) {
-                    println("🔄 Actualizando jugadores: ${nuevosJugadores.size} jugadores")
-                    jugadores = nuevosJugadores
-                }
+                delay(2000) // Mantener conexión activa
 
                 // Verificar si el juego comenzó
                 val sala = juegoController.obtenerSala()
@@ -69,6 +63,14 @@ fun PantallaSalaEspera(
         }
     }
 
+    // Mostrar mensaje de error temporalmente
+    if (mostrarErrorIniciar) {
+        LaunchedEffect(mostrarErrorIniciar) {
+            delay(3000)
+            mostrarErrorIniciar = false
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -82,11 +84,23 @@ fun PantallaSalaEspera(
             )
         },
         floatingActionButton = {
+            // CORREGIDO: Solo mostrar el botón si es anfitrión y hay suficientes jugadores
             if (esAnfitrion && jugadores.size >= 2) {
                 FloatingActionButton(
                     onClick = {
-                        val exito = juegoController.iniciarJuego()
-                        if (exito) onIniciarJuego()
+                        // CORREGIDO: Verificación doble antes de iniciar
+                        if (juegoController.esJugadorActualAnfitrion()) {
+                            val exito = juegoController.iniciarJuego()
+                            if (exito) {
+                                onIniciarJuego()
+                            } else {
+                                mostrarErrorIniciar = true
+                                println("❌ No se pudo iniciar el juego - verificación falló")
+                            }
+                        } else {
+                            mostrarErrorIniciar = true
+                            println("❌ No eres el anfitrión, no puedes iniciar el juego")
+                        }
                     }
                 ) {
                     Icon(Icons.Default.PlayArrow, "Iniciar juego")
@@ -225,6 +239,25 @@ fun PantallaSalaEspera(
                 )
             }
 
+            // Mensaje de error
+            if (mostrarErrorIniciar) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = "❌ Solo el anfitrión puede iniciar el juego",
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+
             // Mensaje informativo para anfitrión
             if (esAnfitrion) {
                 Card(
@@ -341,7 +374,7 @@ fun PantallaSalaEspera(
                 )
             ) {
                 Text(
-                    text = "🔄 Actualizando cada 2 segundos...",
+                    text = "🔄 Conectado en tiempo real...",
                     modifier = Modifier.padding(8.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -41,6 +41,7 @@ fun EmojiGuessApp(juegoController: JuegoController) {
                 currentScreen = "principal"
             },
             onSalaCreada = { currentScreen = "salaEspera" }
+            //sala espera
         )
         "unirseSala" -> PantallaUnirseSala(
             juegoController = juegoController,

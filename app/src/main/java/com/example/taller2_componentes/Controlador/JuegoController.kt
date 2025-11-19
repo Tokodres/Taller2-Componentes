@@ -283,6 +283,53 @@ class JuegoController {
         return true
     }
 
+    // NUEVO: Método para verificar ganador
+    fun verificarGanador(): Jugador? {
+        val sala = salaActual ?: return null
+        val jugadoresActivos = sala.jugadores.filter { it.sigueEnJuego }
+
+        return if (jugadoresActivos.size == 1) {
+            jugadoresActivos.first().also { ganador ->
+                sala.ganador = ganador
+                sala.enCurso = false
+                enviarMensajeSistema("🎉 ¡${ganador.nombre} es el GANADOR!")
+
+                // Sincronizar con Firebase
+                salasRef.child(sala.codigo).setValue(sala)
+            }
+        } else {
+            null
+        }
+    }
+
+    // NUEVO: Método para avanzar turno
+    fun avanzarTurno() {
+        val sala = salaActual ?: return
+        val ronda = sala.rondaActual ?: return
+
+        // Verificar si hay ganador primero
+        if (verificarGanador() != null) {
+            return
+        }
+
+        val jugadoresActivos = sala.jugadores.filter { it.sigueEnJuego }
+        if (jugadoresActivos.isEmpty()) return
+
+        val jugadorActualIndex = jugadoresActivos.indexOfFirst { it.id == ronda.jugadorEnTurno?.id }
+        val siguienteIndex = (jugadorActualIndex + 1) % jugadoresActivos.size
+
+        sala.rondaActual = ronda.copy(
+            jugadorEnTurno = jugadoresActivos[siguienteIndex],
+            tiempoRestante = 30
+        )
+
+        // Sincronizar con Firebase
+        salasRef.child(sala.codigo).setValue(sala)
+
+        // Enviar mensaje de sistema
+        enviarMensajeSistema("🔄 Turno de: ${sala.rondaActual?.jugadorEnTurno?.nombre}")
+    }
+
     fun procesarAdivinanza(jugadorId: String, emojiAdivinado: String): Boolean {
         val sala = salaActual ?: return false
         val jugador = sala.jugadores.find { it.id == jugadorId } ?: return false
@@ -291,9 +338,17 @@ class JuegoController {
 
         if (adivinoCorrecto) {
             enviarMensajeSistema("✅ ${jugador.nombre} adivinó correctamente!")
+            // Avanzar al siguiente turno
+            avanzarTurno()
         } else {
             jugador.sigueEnJuego = false
             enviarMensajeSistema("❌ ${jugador.nombre} falló y fue eliminado")
+
+            // Verificar si hay ganador
+            if (verificarGanador() == null) {
+                // Si no hay ganador, avanzar turno
+                avanzarTurno()
+            }
         }
 
         // Sincronizar con Firebase
@@ -308,11 +363,18 @@ class JuegoController {
 
         if (ronda.tiempoRestante > 0) {
             ronda.tiempoRestante--
+            // Sincronizar con Firebase
+            salasRef.child(sala.codigo).child("rondaActual").child("tiempoRestante").setValue(ronda.tiempoRestante)
         } else {
             // Tiempo agotado, eliminar jugador
             ronda.jugadorEnTurno?.sigueEnJuego = false
             enviarMensajeSistema("⏰ Tiempo agotado para ${ronda.jugadorEnTurno?.nombre}")
-            iniciarNuevaRonda()
+
+            // Verificar si hay ganador
+            if (verificarGanador() == null) {
+                // Si no hay ganador, avanzar turno
+                avanzarTurno()
+            }
         }
     }
 
@@ -396,24 +458,53 @@ class JuegoController {
         )
     }
 
-    fun reiniciarJuego() {
-        salaActual?.jugadores?.forEach { jugador ->
+    // NUEVO: Método mejorado para reiniciar juego
+    fun reiniciarJuego(): Boolean {
+        val sala = salaActual ?: return false
+
+        // CORREGIDO: Solo el anfitrión puede reiniciar
+        if (!_esAnfitrion.value) {
+            println("❌ SOLO EL ANFITRIÓN puede reiniciar el juego")
+            return false
+        }
+
+        sala.jugadores.forEach { jugador ->
             jugador.sigueEnJuego = true
             jugador.emojiAsignado = null
         }
-        salaActual?.enCurso = false
-        salaActual?.rondaActual = null
-        salaActual?.ganador = null
+        sala.enCurso = false
+        sala.rondaActual = null
+        sala.ganador = null
+
+        // Asignar nuevos emojis y comenzar nueva partida
+        asignarEmojis()
+        sala.enCurso = true
+        iniciarNuevaRonda()
+
+        // Sincronizar con Firebase
+        salasRef.child(sala.codigo).setValue(sala)
 
         // Limpiar mensajes del chat
         _mensajesChat.value = emptyList()
 
         // Limpiar mensajes en Firebase
-        val codigoSala = salaActual?.codigo
-        if (codigoSala != null) {
-            CoroutineScope(Dispatchers.IO).launch {
-                firebaseRepository.eliminarMensajesSala(codigoSala).collect()
-            }
+        CoroutineScope(Dispatchers.IO).launch {
+            firebaseRepository.eliminarMensajesSala(sala.codigo).collect()
+        }
+
+        enviarMensajeSistema("🔄 ¡Juego reiniciado! Nueva partida comenzada")
+
+        return true
+    }
+
+    // NUEVO: Método para obtener estado del juego
+    fun obtenerEstadoJuego(): String {
+        val sala = salaActual ?: return "No hay sala"
+
+        return when {
+            sala.ganador != null -> "Ganador: ${sala.ganador?.nombre}"
+            sala.enCurso -> "En curso - Ronda: ${sala.rondaActual?.numero ?: 1}"
+            else -> "En espera"
         }
     }
 

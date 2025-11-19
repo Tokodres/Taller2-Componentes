@@ -38,6 +38,7 @@ fun PantallaJuego(
     var mensajeChat by remember { mutableStateOf(TextFieldValue()) }
 
     val esMiTurno = jugadorEnTurno?.id == jugadorActual?.id
+    val esAnfitrion = juegoController.esJugadorActualAnfitrion()
 
     // Temporizador automático
     LaunchedEffect(Unit) {
@@ -73,6 +74,11 @@ fun PantallaJuego(
                         text = "🎉 ¡GANADOR: ${ganador!!.nombre}! 🎉",
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "¡Felicidades! Has ganado el juego",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 } else {
                     Row(
@@ -137,7 +143,14 @@ fun PantallaJuego(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = when {
+                                    jugador.id == jugadorEnTurno?.id -> MaterialTheme.colorScheme.primaryContainer
+                                    !jugador.sigueEnJuego -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                    else -> MaterialTheme.colorScheme.surface
+                                }
+                            )
                         ) {
                             Row(
                                 modifier = Modifier
@@ -146,14 +159,23 @@ fun PantallaJuego(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = jugador.nombre,
-                                    style = if (jugador.id == jugadorEnTurno?.id)
-                                        MaterialTheme.typography.bodyLarge.copy(
+                                Column {
+                                    Text(
+                                        text = jugador.nombre,
+                                        style = if (jugador.id == jugadorEnTurno?.id)
+                                            MaterialTheme.typography.bodyLarge.copy(
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        else MaterialTheme.typography.bodyLarge
+                                    )
+                                    if (jugador.esAnfitrion) {
+                                        Text(
+                                            text = "👑 Anfitrión",
+                                            style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.primary
                                         )
-                                    else MaterialTheme.typography.bodyLarge
-                                )
+                                    }
+                                }
                                 Text(
                                     text = if (jugador.sigueEnJuego) "✅" else "❌",
                                     style = MaterialTheme.typography.bodyLarge
@@ -294,7 +316,7 @@ fun PantallaJuego(
             }
         }
 
-        // Botones de acción
+        // Botones de acción - MODIFICADO PARA INCLUIR REINICIO
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -317,14 +339,31 @@ fun PantallaJuego(
                 }
             }
 
+            // Botón para reiniciar (solo visible para anfitrión cuando hay ganador)
+            if (ganador != null && esAnfitrion) {
+                Button(
+                    onClick = {
+                        val exito = juegoController.reiniciarJuego()
+                        if (!exito) {
+                            mensaje = "Solo el anfitrión puede reiniciar"
+                        } else {
+                            mensaje = "¡Juego reiniciado!"
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Jugar Otra Vez")
+                }
+            }
+
             Button(
                 onClick = {
-                    juegoController.reiniciarJuego()
+                    juegoController.salirDeSala()
                     onBack()
                 },
                 modifier = Modifier.weight(1f)
             ) {
-                Text(if (ganador != null) "Jugar Otra Vez" else "Salir")
+                Text(if (ganador != null) "Salir" else "Salir del Juego")
             }
         }
     }

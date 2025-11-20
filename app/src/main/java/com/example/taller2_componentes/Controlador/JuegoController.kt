@@ -342,6 +342,9 @@ class JuegoController {
         val jugadorActualIndex = jugadoresActivos.indexOfFirst { it.id == ronda.jugadorEnTurno?.id }
         val siguienteIndex = (jugadorActualIndex + 1) % jugadoresActivos.size
 
+        // NUEVO: Reasignar emojis para la nueva ronda
+        reasignarEmojis()
+
         // Reiniciar preguntas para el nuevo turno
         reiniciarPreguntas()
 
@@ -356,6 +359,7 @@ class JuegoController {
         // Enviar mensaje de sistema
         enviarMensajeSistema("🔄 Turno de: ${sala.rondaActual?.jugadorEnTurno?.nombre}")
     }
+
 
     fun procesarAdivinanza(jugadorId: String, emojiAdivinado: String): Boolean {
         val sala = salaActual ?: return false
@@ -508,6 +512,9 @@ class JuegoController {
         val jugadoresActivos = sala.jugadores.filter { it.sigueEnJuego }
         if (jugadoresActivos.isEmpty()) return
 
+        // NUEVO: Usar reasignarEmojis en lugar de asignarEmojis
+        reasignarEmojis()
+
         sala.rondaActual = Ronda(
             numero = (sala.rondaActual?.numero ?: 0) + 1,
             jugadorEnTurno = jugadoresActivos.first(),
@@ -564,8 +571,8 @@ class JuegoController {
         sala.rondaActual = null
         sala.ganador = null
 
-        // Asignar nuevos emojis y comenzar nueva partida
-        asignarEmojis()
+        // NUEVO: Usar reasignarEmojis en lugar de asignarEmojis
+        reasignarEmojis()
         sala.enCurso = true
         iniciarNuevaRonda()
 
@@ -644,5 +651,18 @@ class JuegoController {
         _salaState.value = null
         _esAnfitrion.value = false
         _preguntasUsadas.value = emptySet()
+    }
+    private fun reasignarEmojis() {
+        val sala = salaActual ?: return
+        val emojisMezclados = emojisDisponibles.shuffled()
+
+        sala.jugadores.forEachIndexed { index, jugador ->
+            if (jugador.sigueEnJuego) {
+                jugador.emojiAsignado = Emoji(emojisMezclados[index % emojisMezclados.size])
+            }
+        }
+
+        // Enviar mensaje de sistema informando del cambio
+        enviarMensajeSistema("🔄 ¡Nuevos emojis asignados para esta ronda!")
     }
 }

@@ -37,6 +37,18 @@ class JuegoController {
     private val _tiempoRestante = MutableStateFlow(30L)
     val tiempoRestante: StateFlow<Long> = _tiempoRestante.asStateFlow()
 
+    // NUEVO: Preguntas disponibles
+    private val preguntasDisponibles = listOf(
+        "¿Mi emoji es una cara?",
+        "¿Mi emoji es de color amarillo?",
+        "¿Mi emoji tiene ojos?",
+        "¿Mi emoji representa una emoción?",
+        "¿Mi emoji es un objeto?"
+    )
+
+    private val _preguntasUsadas = MutableStateFlow<Set<String>>(emptySet())
+    val preguntasUsadas: StateFlow<Set<String>> = _preguntasUsadas.asStateFlow()
+
     private var escuchaMensajesJob: Job? = null
     private var escuchaSalaJob: Job? = null
 
@@ -250,6 +262,18 @@ class JuegoController {
             .map { it.nombre to (it.emojiAsignado?.codigo ?: "") }
     }
 
+    // NUEVO: Método para obtener preguntas disponibles
+    fun obtenerPreguntasDisponibles(jugadorId: String): List<String> {
+        val sala = salaActual ?: return emptyList()
+
+        // Solo el jugador en turno puede ver preguntas disponibles
+        if (sala.rondaActual?.jugadorEnTurno?.id != jugadorId) {
+            return emptyList()
+        }
+
+        return preguntasDisponibles.filter { !_preguntasUsadas.value.contains(it) }
+    }
+
     // ===== MÉTODOS DE JUEGO =====
 
     fun iniciarJuego(): Boolean {
@@ -317,6 +341,9 @@ class JuegoController {
 
         val jugadorActualIndex = jugadoresActivos.indexOfFirst { it.id == ronda.jugadorEnTurno?.id }
         val siguienteIndex = (jugadorActualIndex + 1) % jugadoresActivos.size
+
+        // Reiniciar preguntas para el nuevo turno
+        reiniciarPreguntas()
 
         sala.rondaActual = ronda.copy(
             jugadorEnTurno = jugadoresActivos[siguienteIndex],
@@ -404,6 +431,36 @@ class JuegoController {
         }
     }
 
+    // NUEVO: Método para usar una pregunta
+// NUEVO: Método para usar una pregunta
+    // NUEVO: Método para usar una pregunta
+    fun usarPregunta(jugadorId: String, pregunta: String): Boolean {
+        val sala = salaActual ?: return false
+        val jugador = sala.jugadores.find { it.id == jugadorId }
+
+        // Verificar que el jugador existe, es el turno del jugador y la pregunta está disponible
+        if (jugador == null || jugador.id != sala.rondaActual?.jugadorEnTurno?.id) {
+            return false
+        }
+
+        if (_preguntasUsadas.value.contains(pregunta)) {
+            return false
+        }
+
+        // Marcar pregunta como usada
+        _preguntasUsadas.value = _preguntasUsadas.value + pregunta
+
+        // Enviar pregunta al chat como mensaje del sistema
+        enviarMensajeSistema("❓ ${jugador.nombre} pregunta: $pregunta")
+
+        return true
+    }
+
+    // NUEVO: Método para reiniciar preguntas al cambiar de turno
+    private fun reiniciarPreguntas() {
+        _preguntasUsadas.value = emptySet()
+    }
+
     // Método para enviar mensajes del sistema
     private fun enviarMensajeSistema(mensaje: String) {
         val sala = salaActual ?: return
@@ -458,6 +515,37 @@ class JuegoController {
         )
     }
 
+    // NUEVO: Método para cuando un jugador abandona la sala
+    fun jugadorAbandonaSala(jugadorId: String) {
+        val sala = salaActual ?: return
+        val jugador = sala.jugadores.find { it.id == jugadorId }
+
+        if (jugador != null) {
+            // Si el jugador estaba en juego, marcarlo como eliminado
+            if (jugador.sigueEnJuego) {
+                jugador.sigueEnJuego = false
+                enviarMensajeSistema("🚪 ${jugador.nombre} abandonó la sala")
+
+                // Si era el jugador en turno, avanzar al siguiente
+                if (sala.rondaActual?.jugadorEnTurno?.id == jugadorId) {
+                    avanzarTurno()
+                }
+
+                // Verificar si hay ganador
+                verificarGanador()
+            }
+
+            // Remover jugador de la lista
+            sala.jugadores.remove(jugador)
+
+            // Sincronizar con Firebase
+            salasRef.child(sala.codigo).setValue(sala)
+
+            // Actualizar estado local
+            _jugadores.value = sala.jugadores.toList()
+        }
+    }
+
     // NUEVO: Método mejorado para reiniciar juego
     fun reiniciarJuego(): Boolean {
         val sala = salaActual ?: return false
@@ -497,6 +585,32 @@ class JuegoController {
         return true
     }
 
+    // NUEVO: Método para volver a sala de espera después del juego
+    fun volverASalaEspera(): Boolean {
+        val sala = salaActual ?: return false
+
+        // Solo el anfitrión puede volver a sala de espera
+        if (!_esAnfitrion.value) {
+            return false
+        }
+
+        // Reiniciar estado del juego pero mantener jugadores
+        sala.jugadores.forEach { jugador ->
+            jugador.sigueEnJuego = true
+            jugador.emojiAsignado = null
+        }
+        sala.enCurso = false
+        sala.rondaActual = null
+        sala.ganador = null
+
+        // Sincronizar con Firebase
+        salasRef.child(sala.codigo).setValue(sala)
+
+        enviarMensajeSistema("🏠 Volviendo a sala de espera...")
+
+        return true
+    }
+
     // NUEVO: Método para obtener estado del juego
     fun obtenerEstadoJuego(): String {
         val sala = salaActual ?: return "No hay sala"
@@ -509,11 +623,19 @@ class JuegoController {
     }
 
     fun salirDeSala() {
+        val jugadorId = jugadorActual?.id
+        val salaCodigo = salaActual?.codigo
+
         // Cancelar escucha de mensajes y sala
         escuchaMensajesJob?.cancel()
         escuchaSalaJob?.cancel()
         escuchaMensajesJob = null
         escuchaSalaJob = null
+
+        // Notificar que el jugador abandonó (si estaba en una sala)
+        if (jugadorId != null && salaCodigo != null) {
+            jugadorAbandonaSala(jugadorId)
+        }
 
         salaActual = null
         jugadorActual = null
@@ -521,5 +643,6 @@ class JuegoController {
         _jugadores.value = emptyList()
         _salaState.value = null
         _esAnfitrion.value = false
+        _preguntasUsadas.value = emptySet()
     }
 }

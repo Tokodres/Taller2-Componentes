@@ -41,7 +41,6 @@ fun EmojiGuessApp(juegoController: JuegoController) {
                 currentScreen = "principal"
             },
             onSalaCreada = { currentScreen = "salaEspera" }
-            //sala espera
         )
         "unirseSala" -> PantallaUnirseSala(
             juegoController = juegoController,
@@ -61,6 +60,9 @@ fun EmojiGuessApp(juegoController: JuegoController) {
             onBack = {
                 juegoController.salirDeSala()
                 currentScreen = "principal"
+            },
+            onVolverSalaEspera = {
+                currentScreen = "salaEspera"
             }
         )
     }

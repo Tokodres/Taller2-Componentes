@@ -22,23 +22,27 @@ import kotlinx.coroutines.delay
 @Composable
 fun PantallaJuego(
     juegoController: JuegoController,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onVolverSalaEspera: () -> Unit
 ) {
     var jugadores by remember { mutableStateOf(juegoController.obtenerJugadores()) }
     var jugadorEnTurno by remember { mutableStateOf(juegoController.obtenerJugadorEnTurno()) }
     val jugadorActual = remember { juegoController.obtenerJugadorActual() }
     var mensaje by remember { mutableStateOf("") }
     var mostrarDialogoEmojis by remember { mutableStateOf(false) }
+    var mostrarDialogoPreguntas by remember { mutableStateOf(false) }
     var ganador by remember { mutableStateOf(juegoController.obtenerSala()?.ganador) }
-    var tiempoRestante by remember { mutableStateOf(juegoController.obtenerTiempoRestante()) }
 
     // CORREGIDO: Usar el StateFlow de mensajes del controlador
     val mensajesChat by juegoController.mensajesChat.collectAsState()
+    val preguntasUsadas by juegoController.preguntasUsadas.collectAsState()
 
     var mensajeChat by remember { mutableStateOf(TextFieldValue()) }
+    var tiempoRestante by remember { mutableStateOf(juegoController.obtenerTiempoRestante()) }
 
     val esMiTurno = jugadorEnTurno?.id == jugadorActual?.id
     val esAnfitrion = juegoController.esJugadorActualAnfitrion()
+    val preguntasDisponibles = juegoController.obtenerPreguntasDisponibles(jugadorActual?.id ?: "")
 
     // Temporizador automático
     LaunchedEffect(Unit) {
@@ -97,6 +101,13 @@ fun PantallaJuego(
                                 color = if (tiempoRestante <= 10) MaterialTheme.colorScheme.error
                                 else MaterialTheme.colorScheme.onSurface
                             )
+                            if (esMiTurno) {
+                                Text(
+                                    text = "Preguntas disponibles: ${preguntasDisponibles.size}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                         Text(
                             text = "Ronda: ${juegoController.obtenerSala()?.rondaActual?.numero ?: 1}",
@@ -130,7 +141,7 @@ fun PantallaJuego(
             ) {
                 // Jugadores
                 Text(
-                    text = "Jugadores:",
+                    text = "Jugadores (${jugadores.size}):",
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
@@ -223,7 +234,7 @@ fun PantallaJuego(
                 }
             }
 
-            // Chat - COMPLETAMENTE CORREGIDO
+            // Chat - CON RESTRICCIONES PARA JUGADOR EN TURNO
             Column(
                 modifier = Modifier.weight(1f)
             ) {
@@ -254,61 +265,90 @@ fun PantallaJuego(
                                         .padding(vertical = 2.dp),
                                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = if (mensajeChatItem.jugadorId == "sistema")
-                                            MaterialTheme.colorScheme.tertiaryContainer
-                                        else if (mensajeChatItem.jugadorId == jugadorActual?.id)
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        else
-                                            MaterialTheme.colorScheme.surface
+                                        containerColor = when {
+                                            mensajeChatItem.jugadorId == "sistema" ->
+                                                MaterialTheme.colorScheme.tertiaryContainer
+                                            mensajeChatItem.jugadorId == jugadorActual?.id ->
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            else -> MaterialTheme.colorScheme.surface
+                                        }
                                     )
                                 ) {
                                     Column(modifier = Modifier.padding(8.dp)) {
                                         Text(
                                             text = mensajeChatItem.nombreJugador,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = if (mensajeChatItem.jugadorId == "sistema")
-                                                MaterialTheme.colorScheme.onTertiaryContainer
-                                            else
-                                                MaterialTheme.colorScheme.primary
+                                            color = when {
+                                                mensajeChatItem.jugadorId == "sistema" ->
+                                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                                else -> MaterialTheme.colorScheme.primary
+                                            }
                                         )
                                         Text(
                                             text = mensajeChatItem.mensaje,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (mensajeChatItem.jugadorId == "sistema")
-                                                MaterialTheme.colorScheme.onTertiaryContainer
-                                            else
-                                                MaterialTheme.colorScheme.onSurface
+                                            color = when {
+                                                mensajeChatItem.jugadorId == "sistema" ->
+                                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                                else -> MaterialTheme.colorScheme.onSurface
+                                            }
                                         )
                                     }
                                 }
                             }
                         }
 
-                        // Input de chat
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = mensajeChat,
-                                onValueChange = { mensajeChat = it },
-                                label = { Text("Escribe un mensaje...") },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true
-                            )
-
-                            IconButton(
-                                onClick = {
-                                    if (mensajeChat.text.isNotBlank()) {
-                                        // CORREGIDO: Usar el nuevo método de enviar mensaje
-                                        juegoController.enviarMensajeChat(mensajeChat.text)
-                                        mensajeChat = TextFieldValue()
-                                    }
-                                }
+                        // Input de chat - RESTRINGIDO PARA JUGADOR EN TURNO
+                        if (!esMiTurno || ganador != null) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Send, contentDescription = "Enviar")
+                                OutlinedTextField(
+                                    value = mensajeChat,
+                                    onValueChange = { mensajeChat = it },
+                                    label = {
+                                        Text(
+                                            if (esMiTurno && ganador == null)
+                                                "No puedes chatear durante tu turno"
+                                            else "Escribe un mensaje..."
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    enabled = !esMiTurno || ganador != null
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        if (mensajeChat.text.isNotBlank() && (!esMiTurno || ganador != null)) {
+                                            juegoController.enviarMensajeChat(mensajeChat.text)
+                                            mensajeChat = TextFieldValue()
+                                        }
+                                    },
+                                    enabled = mensajeChat.text.isNotBlank() && (!esMiTurno || ganador != null)
+                                ) {
+                                    Icon(Icons.Default.Send, contentDescription = "Enviar")
+                                }
+                            }
+                        } else {
+                            // Mensaje para jugador en turno
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Text(
+                                    text = "⏳ Estás en tu turno. No puedes chatear ahora.",
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -316,54 +356,128 @@ fun PantallaJuego(
             }
         }
 
-        // Botones de acción - MODIFICADO PARA INCLUIR REINICIO
-        Row(
+        // Botones de acción - MODIFICADO CON NUEVAS OPCIONES
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (ganador == null && esMiTurno) {
-                Button(
-                    onClick = {
-                        if (jugadorEnTurno != null) {
-                            mostrarDialogoEmojis = true
-                        } else {
-                            mensaje = "No hay jugador en turno"
-                        }
-                    },
-                    enabled = jugadorEnTurno != null,
-                    modifier = Modifier.weight(1f)
+            if (ganador == null) {
+                // Botones durante el juego
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Adivinar Mi Emoji")
-                }
-            }
-
-            // Botón para reiniciar (solo visible para anfitrión cuando hay ganador)
-            if (ganador != null && esAnfitrion) {
-                Button(
-                    onClick = {
-                        val exito = juegoController.reiniciarJuego()
-                        if (!exito) {
-                            mensaje = "Solo el anfitrión puede reiniciar"
-                        } else {
-                            mensaje = "¡Juego reiniciado!"
+                    if (esMiTurno) {
+                        // Botones para jugador en turno
+                        Button(
+                            onClick = { mostrarDialogoEmojis = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Adivinar Emoji")
                         }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Jugar Otra Vez")
-                }
-            }
 
-            Button(
-                onClick = {
-                    juegoController.salirDeSala()
-                    onBack()
-                },
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(if (ganador != null) "Salir" else "Salir del Juego")
+                        Button(
+                            onClick = {
+                                if (preguntasDisponibles.isNotEmpty()) {
+                                    mostrarDialogoPreguntas = true
+                                } else {
+                                    mensaje = "No tienes preguntas disponibles"
+                                }
+                            },
+                            enabled = preguntasDisponibles.isNotEmpty(),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Hacer Pregunta (${preguntasDisponibles.size})")
+                        }
+                    } else {
+                        // Espacio para jugadores que no están en turno
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            Text(
+                                text = if (jugadorActual?.sigueEnJuego == true)
+                                    "Espera tu turno..."
+                                else "Has sido eliminado",
+                                modifier = Modifier.align(Alignment.Center),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            juegoController.salirDeSala()
+                            onBack()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Abandonar Juego")
+                    }
+                }
+            } else {
+                // Botones cuando hay ganador
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (esAnfitrion) {
+                        Button(
+                            onClick = {
+                                val exito = juegoController.reiniciarJuego()
+                                if (!exito) {
+                                    mensaje = "Error al reiniciar el juego"
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Reiniciar Juego")
+                        }
+
+                        Button(
+                            onClick = {
+                                val exito = juegoController.volverASalaEspera()
+                                if (exito) {
+                                    onVolverSalaEspera()
+                                } else {
+                                    mensaje = "Solo el anfitrión puede volver a sala de espera"
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Volver a Sala")
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            juegoController.salirDeSala()
+                            onBack()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Salir")
+                    }
+                }
+
+                // Mensaje informativo para jugadores no anfitrión
+                if (!esAnfitrion) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Text(
+                            text = "Esperando que el anfitrión reinicie el juego o vuelva a la sala de espera...",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             }
         }
     }
@@ -419,6 +533,74 @@ fun PantallaJuego(
 
                     Button(
                         onClick = { mostrarDialogoEmojis = false },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp)
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
+            }
+        }
+    }
+
+    // Diálogo para seleccionar pregunta
+    if (mostrarDialogoPreguntas) {
+        Dialog(
+            onDismissRequest = { mostrarDialogoPreguntas = false }
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "Selecciona una pregunta",
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    Text(
+                        text = "Puedes usar cada pregunta solo una vez por turno",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier.height(200.dp)
+                    ) {
+                        items(preguntasDisponibles) { pregunta ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        val exito = juegoController.usarPregunta(jugadorActual?.id ?: "", pregunta)
+                                        if (exito) {
+                                            mensaje = "Pregunta enviada al chat"
+                                            mostrarDialogoPreguntas = false
+                                        } else {
+                                            mensaje = "Error al usar la pregunta"
+                                        }
+                                    },
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Text(
+                                    text = pregunta,
+                                    modifier = Modifier.padding(16.dp),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = { mostrarDialogoPreguntas = false },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 16.dp)
